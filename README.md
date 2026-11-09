@@ -3,6 +3,9 @@
 > 看见生命，理解身体，珍惜健康。
 > 纯前端 three.js 交互式人体科普应用：可旋转的人体、可点击的器官、
 > 随心跳奔涌的血管粒子流。
+>
+> 首次了解项目功能和操作方式，请先看 [项目说明与使用说明](docs/PROJECT_GUIDE.md)；
+> 本文档面向开发者，侧重安装、构建与开源信息。
 
 ## 快速开始
 
@@ -55,6 +58,7 @@ npm run build      # dist/ 纯静态，可直接部署
 
 | 文件 | 内容 |
 |---|---|
+| [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md) | **项目说明与使用说明（面向阅读者／课程检查）** |
 | [STATUS.md](STATUS.md) | 迭代历史与当前状态（v2→v9.9） |
 | [docs/PROMPT.md](docs/PROMPT.md) | Master Prompt（需求 R1–R10、决议链 v2→v9） |
 | [docs/RESEARCH.md](docs/RESEARCH.md) | 开源调研与借用清单 |
