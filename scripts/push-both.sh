@@ -2,21 +2,19 @@
 # 同时把当前分支推送到 GitHub 与 Gitee（SSH 方式）。
 #
 # 用法：
-#   GITHUB_ID=your_id GITEE_ID=your_id ./scripts/push-both.sh
-#   GITHUB_ID=your_id GITEE_ID=your_id ./scripts/push-both.sh --with-tags
+#   ./scripts/push-both.sh                                  # 复用仓库里已配置的 github / gitee 远端
+#   GITHUB_ID=xx GITEE_ID=yy ./scripts/push-both.sh         # 首次使用，按账号 ID 配置远端
+#   ./scripts/push-both.sh --with-tags                      # 同时推送标签
 #
-# 也可以直接给完整地址，跳过 ID 拼接：
-#   GITHUB_REMOTE=git@github.com:you/life-voyage-3d.git \
-#   GITEE_REMOTE=git@gitee.com:you/life-voyage-3d.git ./scripts/push-both.sh
+# 也可以直接给完整地址：
+#   GITHUB_REMOTE=git@github.com:you/repo.git \
+#   GITEE_REMOTE=git@gitee.com:you/repo.git ./scripts/push-both.sh
 #
-# 注意：脚本不会创建远程仓库，请先在两个平台网页端创建空仓库。
+# 注意：脚本不会创建远程仓库，请先在两个平台网页端创建仓库。
 
 set -uo pipefail
 
-GITHUB_ID="${GITHUB_ID:-YOUR_GITHUB_ID}"
-GITEE_ID="${GITEE_ID:-YOUR_GITEE_ID}"
-GITHUB_REMOTE="${GITHUB_REMOTE:-git@github.com:${GITHUB_ID}/life-voyage-3d.git}"
-GITEE_REMOTE="${GITEE_REMOTE:-git@gitee.com:${GITEE_ID}/life-voyage-3d.git}"
+REPO_NAME="${REPO_NAME:-life-voyage-3d}"
 BRANCH="${BRANCH:-main}"
 WITH_TAGS=0
 [[ "${1:-}" == "--with-tags" ]] && WITH_TAGS=1
@@ -25,8 +23,23 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "错误：当前目录不是 git 仓库，请先 git init" >&2
   exit 1
 fi
-if [[ "$GITHUB_ID" == "YOUR_GITHUB_ID" || "$GITEE_ID" == "YOUR_GITEE_ID" ]]; then
-  echo "错误：请先设置 GITHUB_ID 与 GITEE_ID，或直接提供 GITHUB_REMOTE / GITEE_REMOTE。" >&2
+
+# 远端地址优先级：显式环境变量 > 仓库里已配置的 remote > 由账号 ID 拼装。
+# 两个远端都已配好时，无需再提供账号 ID。
+resolve_remote() {
+  local name="$1" id="$2" host="$3" explicit="$4" existing
+  if [[ -n "$explicit" ]]; then echo "$explicit"; return; fi
+  existing=$(git remote get-url "$name" 2>/dev/null || true)
+  if [[ -n "$existing" ]]; then echo "$existing"; return; fi
+  if [[ -n "$id" ]]; then echo "git@${host}:${id}/${REPO_NAME}.git"; return; fi
+  echo ""
+}
+
+GITHUB_REMOTE=$(resolve_remote github "${GITHUB_ID:-}" github.com "${GITHUB_REMOTE:-}")
+GITEE_REMOTE=$(resolve_remote gitee  "${GITEE_ID:-}" gitee.com  "${GITEE_REMOTE:-}")
+
+if [[ -z "$GITHUB_REMOTE" || -z "$GITEE_REMOTE" ]]; then
+  echo "错误：缺少远端地址。请提供 GITHUB_ID 与 GITEE_ID，或 GITHUB_REMOTE / GITEE_REMOTE。" >&2
   echo "示例：GITHUB_ID=octocat GITEE_ID=octocat ./scripts/push-both.sh" >&2
   exit 1
 fi
