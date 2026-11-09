@@ -1,0 +1,73 @@
+{
+  "nodes": [
+    {
+      "id": "nerves", "nameZh": "周围神经网", "nameEn": "Peripheral Nerves", "system": "nervous", "color": "#f3e27a",
+      "summary": "从脊髓出发的电线网络：31 对脊神经与它们的分支，把全身每一寸皮肤和肌肉接入中控。",
+      "structure": ["31 对脊神经：颈 8、胸 12、腰 5、骶 5、尾 1", "神经干外裹神经外膜，内含成千上万根轴突", "损伤后再生速度约每天 1 毫米"],
+      "facts": [
+        { "text": "动作电位传导速度最快可超过每秒 100 米——身体里的光纤级线路", "reference": "默沙东诊疗手册大众版·神经传导" },
+        { "text": "周围神经损伤后可以再生，速度约每天 1 毫米", "reference": "默沙东诊疗手册大众版·神经再生" }
+      ],
+      "careTips": ["规律运动促进神经肌肉协调", "均衡 B 族维生素摄入是神经髓鞘的建材"],
+      "camera": { "position": [0.0, 1.0, 2.6], "target": [0, 0.9, 0] }
+    },
+    {
+      "id": "node-spinal-cord", "nameZh": "脊髓", "nameEn": "Spinal Cord", "system": "nervous", "color": "#f3e27a",
+      "summary": "脑与身体之间的信息高速公路：上行报告、下行指令，还能就地完成反射决策。",
+      "structure": ["上接脑干，下至约第 1–2 腰椎水平（脊髓圆锥）", "以下的神经根继续下行，形似马尾", "31 对脊神经从这里进出"],
+      "facts": [
+        { "text": "成人脊髓长约 43–46 厘米", "reference": "TeachMeAnatomy·脊髓" },
+        { "text": "它比脊柱短——止于 L1–L2，所以腰椎穿刺在 L3/L4 以下是安全的", "reference": "Cleveland Clinic·腰椎穿刺" },
+        { "text": "摸到烫的东西先缩手、后知道疼——反射弧在脊髓就地完成", "reference": "默沙东诊疗手册大众版·反射" }
+      ],
+      "careTips": ["运动前充分热身，保护脊柱与脊髓", "坐姿挺直，减少椎间盘压力"],
+      "camera": { "position": [0.161, 1.377, 0.429], "target": [0.0, 1.297, 0.009] }
+    },
+    {
+      "id": "node-brachial-plexus", "nameZh": "臂丛", "nameEn": "Brachial Plexus", "system": "nervous", "color": "#f3e27a",
+      "summary": "上肢的神经总线：五根神经根在这里编织重组，再分配给整条手臂。",
+      "structure": ["由 C5–T1 五根脊神经前支汇成", "根→干→束→支，四级编排", "最终分出桡、正中、尺等神经"],
+      "facts": [
+        { "text": "五根神经根先合并成三干，再编织成三束——冗余设计让单点压迫不易让整条手臂失联", "reference": "TeachMeAnatomy·臂丛" },
+        { "text": "它穿过锁骨与第一肋之间的狭窄通道——背包过重最先压迫这里", "reference": "默沙东诊疗手册大众版·臂丛神经病" }
+      ],
+      "careTips": ["背包别过重，双肩轮流分担", "避免长时间头前伸的姿势"],
+      "camera": { "position": [0.161, 1.208, 0.446], "target": [0.001, 1.128, 0.046] }
+    },
+    {
+      "id": "node-median-nerve", "nameZh": "正中神经", "nameEn": "Median Nerve", "system": "nervous", "color": "#f3e27a",
+      "summary": "手部的主数据线：穿过腕管进入手掌，主管拇指侧感觉与精细抓握。",
+      "structure": ["从臂丛外侧束与内侧束汇合而成", "与前臂 9 条肌腱共同穿过腕管", "支配前臂屈肌群与手掌桡侧"],
+      "facts": [
+        { "text": "腕管内 9 条肌腱与 1 条正中神经挤在一个狭窄管道里", "reference": "默沙东诊疗手册大众版·腕管综合征" },
+        { "text": "长时间屈腕压迫它会引起拇指侧麻木刺痛——就是腕管综合征", "reference": "默沙东诊疗手册大众版·腕管综合征" }
+      ],
+      "careTips": ["键盘鼠标时保持手腕自然平直", "每小时做一次手腕伸展"],
+      "camera": { "position": [0.343, 1.165, 0.436], "target": [0.183, 1.085, 0.056] }
+    },
+    {
+      "id": "node-sciatic-nerve", "nameZh": "坐骨神经", "nameEn": "Sciatic Nerve", "system": "nervous", "color": "#f3e27a",
+      "summary": "全身最粗最长的神经：从下腰一直管到脚趾，粗得像你的拇指。",
+      "structure": ["起于 L4–S3 神经根", "经梨状肌下孔出骨盆，走行于大腿后方", "在腘窝分为胫神经与腓总神经"],
+      "facts": [
+        { "text": "直径可达约 2 厘米——比脊髓本身还粗", "reference": "Cleveland Clinic·坐骨神经" },
+        { "text": "它是全身最长的神经，从下腰到足部贯穿整条腿", "reference": "TeachMeAnatomy·坐骨神经" },
+        { "text": "久坐与跷二郎腿是最常见的压迫来源", "reference": "默沙东诊疗手册大众版·坐骨神经痛" }
+      ],
+      "careTips": ["每 45 分钟起身活动", "加强核心与臀肌，给神经让出空间"],
+      "camera": { "position": [0.227, 0.82, 0.509], "target": [0.047, 0.74, 0.009] }
+    },
+    {
+      "id": "node-vagus-nerve", "nameZh": "迷走神经", "nameEn": "Vagus Nerve", "system": "nervous", "color": "#f3e27a",
+      "summary": "最长的脑神经：从脑干一路游走到胸腔与腹腔，是副交感系统的主干线。",
+      "structure": ["第 X 对脑神经，从脑干发出", "穿颈部入胸，沿食管达腹腔", "支配心率与大部分消化道"],
+      "facts": [
+        { "text": "名字来自拉丁语 vagus——游走", "reference": "TeachMeAnatomy·迷走神经" },
+        { "text": "约 80–90% 的纤维是传入纤维：器官不断向脑汇报状态", "reference": "Cleveland Clinic·迷走神经" },
+        { "text": "深慢呼吸会温和刺激它——这是深呼吸让人平静的原因之一", "reference": "WHO 压力管理科普" }
+      ],
+      "careTips": ["深呼吸、冥想、冷水洗脸都是温和的迷走刺激", "规律作息让副交感节律更稳"],
+      "camera": { "position": [0.175, 1.504, 0.387], "target": [0.015, 1.424, 0.047] }
+    }
+  ]
+}

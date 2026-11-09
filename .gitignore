@@ -1,0 +1,41 @@
+# ---------- 依赖 ----------
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- 构建产物 ----------
+dist/
+.vite/
+*.tsbuildinfo
+
+# ---------- 环境变量与密钥 ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# ---------- 上游原始 / 中间资产 ----------
+# 体积约 90 MB，且为 Z-Anatomy 等第三方 CC BY-SA 资产的再分发，不纳入版本控制。
+# 仓库已包含运行所需的 5 个成品 GLB（public/models/*.glb）。
+# 若需重建资产，请从 ATTRIBUTION.md 所列上游自行获取。
+public/models/atlas-src/
+tools/tmp/
+
+# ---------- 编辑器 / 操作系统 ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 日志 / 测试输出 / 临时文件 ----------
+*.log
+coverage/
+*.tmp
+*.bak
+*~

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="生命奇旅 LifeVoyage — 看见生命，理解身体，珍惜健康。交互式 3D 人体科普。" />
+  <title>生命奇旅 LifeVoyage · 3D 人体探索</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2322d3ee'%3E%3Cpath d='M12 21s-7.5-4.9-10-9.2C.4 8.6 2 5 5.5 5c2 0 3.4 1.1 4.2 2.4L12 10l2.3-2.6C15.1 6.1 16.5 5 18.5 5 22 5 23.6 8.6 22 11.8 19.5 16.1 12 21 12 21z'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app">
+    <!-- 极光背景（CSS，画布透明叠加其上） -->
+    <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+    <canvas id="stage"></canvas>
+
+    <!-- 顶栏 -->
+    <header id="topbar" class="glass">
+      <button id="btn-nav" class="icon-btn nav-toggle" title="器官导航" aria-label="打开器官导航" aria-expanded="false">
+        <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div class="brand"><span class="logo-dot"></span><b>生命奇旅</b><span class="brand-en">LifeVoyage</span></div>
+      <nav id="system-switch" class="seg" role="group" aria-label="系统切换"></nav>
+      <div class="top-actions">
+        <div class="searchbox">
+          <svg viewBox="0 0 24 24" class="ic"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="search" type="search" placeholder="搜索器官…" autocomplete="off" aria-label="搜索器官" />
+        </div>
+        <button id="btn-about" class="icon-btn" title="关于与署名">
+          <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- 左栏：器官导航 -->
+    <aside id="nav" class="glass" aria-label="器官导航"></aside>
+
+    <!-- 右侧信息面板 -->
+    <section id="panel" class="glass" role="complementary" aria-label="器官详情">
+      <button id="panel-close" class="icon-btn" title="关闭 (Esc)">
+        <svg viewBox="0 0 24 24" class="ic"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+      <div id="panel-body"></div>
+    </section>
+
+    <!-- 底部控制台：L0 模式条 / L1-L3 图层域 / 特别功能区 -->
+    <footer id="hud" class="glass">
+      <!-- L0 模式条（互斥、独占、带说明与明确退出） -->
+      <div class="hud-modebar">
+        <div class="mode-seg" role="group" aria-label="视图模式">
+          <button id="mode-browse" class="mode-btn on" type="button">浏览</button>
+          <button id="blood-solo" class="mode-btn" type="button" title="透视视图：只留幽灵轮廓与粒子流">透视</button>
+          <button id="btn-tour" class="mode-btn" type="button" title="自动巡游讲解">巡游</button>
+          <button id="btn-quiz" class="mode-btn" type="button" title="找器官测验（10 题）">测验</button>
+        </div>
+        <span id="mode-notice" class="mode-notice" aria-live="polite">浏览 · 可自由调整图层与参数</span>
+        <button id="mode-exit" class="mode-exit" type="button" hidden>退出当前模式</button>
+      </div>
+
+      <!-- L1 图层域总开关 + L2 副开关 + L3 小参数 -->
+      <div class="hud-layers" title="左右滑动查看全部图层域">
+        <section class="layer-domain" data-domain="body" aria-label="体格图层">
+          <div class="domain-head">
+            <button id="body-layer-toggle" class="domain-toggle on" role="switch" aria-checked="true" aria-label="体格层总开关"><i></i></button>
+            <span class="domain-name">体格</span>
+          </div>
+          <div class="domain-controls">
+            <div id="body-mode" class="seg seg-sm"></div>
+            <label class="hud-label" for="opacity">透明</label>
+            <input id="opacity" type="range" min="0" max="100" value="60" aria-label="体格层不透明度" />
+          </div>
+        </section>
+
+        <section class="layer-domain" data-domain="organ" aria-label="器官图层">
+          <div class="domain-head">
+            <button id="organs-toggle" class="domain-toggle on" role="switch" aria-checked="true" aria-label="器官层总开关"><i></i></button>
+            <span class="domain-name">器官</span>
+          </div>
+          <div class="domain-controls">
+            <span class="hud-toggle"><button id="solo-toggle" class="toggle on" role="switch" aria-checked="true" aria-label="选中隔离"><i></i></button><label class="hud-label" for="solo-toggle">选中隔离</label></span>
+          </div>
+        </section>
+
+        <section class="layer-domain" data-domain="vessel" aria-label="脉管图层">
+          <div class="domain-head">
+            <button id="vessel-layer-toggle" class="domain-toggle on" role="switch" aria-checked="true" aria-label="脉管层总开关"><i></i></button>
+            <span class="domain-name">脉管</span>
+          </div>
+          <div class="domain-controls">
+            <span class="hud-toggle"><button id="vessels-toggle" class="toggle on" role="switch" aria-checked="true" aria-label="血管管壁"><i></i></button><label class="hud-label" for="vessels-toggle">管壁</label></span>
+            <span class="hud-toggle"><button id="bloodflow-toggle" class="toggle" role="switch" aria-checked="false" aria-label="血流粒子"><i></i></button><label class="hud-label" for="bloodflow-toggle">血流</label></span>
+            <label class="hud-label" for="flow-speed">流速</label>
+            <input id="flow-speed" type="range" min="10" max="250" value="60" aria-label="粒子流速倍率" />
+          </div>
+        </section>
+
+        <section class="layer-domain" data-domain="nerve" aria-label="神经图层">
+          <div class="domain-head">
+            <button id="nerve-layer-toggle" class="domain-toggle on" role="switch" aria-checked="true" aria-label="神经层总开关"><i></i></button>
+            <span class="domain-name">神经</span>
+          </div>
+          <div class="domain-controls">
+            <span class="hud-toggle"><button id="nerves-toggle" class="toggle on" role="switch" aria-checked="true" aria-label="神经网"><i></i></button><label class="hud-label" for="nerves-toggle">神经网</label></span>
+            <span class="hud-toggle"><button id="nerveflow-toggle" class="toggle" role="switch" aria-checked="false" aria-label="神经信号粒子"><i></i></button><label class="hud-label" for="nerveflow-toggle">信号</label></span>
+          </div>
+        </section>
+
+        <section class="layer-domain" data-domain="label" aria-label="标注图层">
+          <div class="domain-head">
+            <button id="labels-toggle" class="domain-toggle on" role="switch" aria-checked="true" aria-label="标注层总开关"><i></i></button>
+            <span class="domain-name">标注</span>
+          </div>
+          <div class="domain-controls"><span class="domain-hint">随系统与选中自动精简</span></div>
+        </section>
+      </div>
+
+      <!-- 特别功能区：全局参数与一次性动作，与图层视觉隔离 -->
+      <div class="hud-tools">
+        <div class="hud-group">
+          <span class="hud-label">剖切</span>
+          <div id="clip-mode" class="seg seg-sm"></div>
+          <input id="clip-pos" type="range" min="0" max="100" value="50" disabled aria-label="剖切位置" />
+        </div>
+        <div class="hud-group">
+          <span id="heart-pulse" class="heart" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-10-9.2C.4 8.6 2 5 5.5 5c2 0 3.4 1.1 4.2 2.4L12 10l2.3-2.6C15.1 6.1 16.5 5 18.5 5 22 5 23.6 8.6 22 11.8 19.5 16.1 12 21 12 21z"/></svg>
+          </span>
+          <label class="hud-label" for="bpm">心率</label>
+          <input id="bpm" type="range" min="50" max="120" value="72" aria-label="心率每分钟次数" />
+          <output id="bpm-val" for="bpm">72</output>
+        </div>
+        <div class="hud-group">
+          <button id="btn-reset" class="text-btn" title="重置视角并取消选中">
+            <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>视角
+          </button>
+          <button id="btn-shot" class="text-btn" title="保存当前画面为 PNG">
+            <svg viewBox="0 0 24 24" class="ic" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M8 6l1.2-2h5.6L16 6"/></svg>截图
+          </button>
+        </div>
+      </div>
+    </footer>
+
+    <!-- 操作反馈（模式切换 / 被接管说明） -->
+    <div id="toast" class="toast glass" role="status" aria-live="polite" hidden></div>
+
+    <!-- 悬停提示 -->
+    <div id="tooltip" class="glass" hidden></div>
+
+    <!-- 测验横幅 -->
+    <div id="quiz-banner" class="glass" role="status" aria-live="polite" hidden></div>
+
+    <!-- 巡游字幕 -->
+    <div id="tour-caption" class="glass" role="status" hidden></div>
+
+    <!-- 食物之旅字幕 -->
+    <div id="food-caption" class="glass" hidden></div>
+
+    <!-- 标注层（CSS2DRenderer 注入） -->
+    <div id="labels"></div>
+
+    <!-- 关于弹窗 -->
+    <div id="about" class="modal" role="dialog" aria-modal="true" aria-labelledby="about-title" hidden>
+      <div class="modal-mask" data-close></div>
+      <div class="modal-card glass">
+        <button class="icon-btn modal-close" data-close title="关闭">
+          <svg viewBox="0 0 24 24" class="ic"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+        <h2 id="about-title">生命奇旅 <span class="en">LifeVoyage</span></h2>
+        <p class="slogan">看见生命，理解身体，珍惜健康。</p>
+        <p class="disclaimer">本作品仅供健康教育科普，不构成任何诊断或医疗建议；如有不适请咨询专业医疗机构。</p>
+        <h3>数据与医学内容参考</h3>
+        <ul>
+          <li>默沙东诊疗手册大众版（MSD Manual Consumer Version）</li>
+          <li>世界卫生组织（WHO）健康科普资料</li>
+        </ul>
+        <h3>模型与开源署名</h3>
+        <ul>
+          <li>① 人体 3D 模型改编自 <a href="https://github.com/hpfrei/body-anatomy-3d-viewer" target="_blank" rel="noreferrer">body-anatomy-3d-viewer</a>（基于 <a href="https://github.com/topics/z-anatomy" target="_blank" rel="noreferrer">Z-Anatomy</a> 数据集），依 <b>CC BY-SA 4.0</b> 授权使用，本作品相应部分同样以 CC BY-SA 4.0 共享。</li>
+          <li>② 解剖数据亦参考 <a href="https://lifesciencedb.jp/bp3d/?lng=en" target="_blank" rel="noreferrer">BodyParts3D</a>，© The Database Center for Life Science，依 CC 署名-相同方式共享授权使用。</li>
+          <li>③ 三维渲染基于 <a href="https://threejs.org" target="_blank" rel="noreferrer">three.js</a>（MIT License）。</li>
+          <li>④ 肺、肝、心、脑等器官几何源自 Z-Anatomy（CC BY-SA 4.0，经 Svitylo 3D Anatomy Atlas 数据管线整理）。</li>
+        </ul>
+        <p class="fine">交互式教育用途 · 非诊断或手术用途 · 所有数字型事实在页面数据中标注来源</p>
+      </div>
+    </div>
+
+    <!-- 加载页 -->
+    <div id="loading">
+      <div class="load-inner">
+        <div class="load-logo"><span class="logo-dot big"></span>生命奇旅</div>
+        <div class="load-en">LIFEVOYAGE · 3D HUMAN EXPLORER</div>
+        <div class="load-bar"><i id="load-bar-fill"></i></div>
+        <div class="load-tip" id="load-tip">正在点亮你的身体…</div>
+      </div>
+    </div>
+
+    <noscript>本应用需要启用 JavaScript。</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </div>
+</body>
+</html>

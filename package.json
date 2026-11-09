@@ -1,0 +1,26 @@
+{
+  "name": "life-voyage-3d",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check:glb": "node tools/inspect-glb.mjs"
+  },
+  "dependencies": {
+    "three": "0.170.0",
+    "three-mesh-bvh": "0.8.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.1.0",
+    "@gltf-transform/extensions": "^4.1.0",
+    "@gltf-transform/functions": "^4.1.0",
+    "@types/three": "0.170.0",
+    "draco3dgltf": "^1.5.7",
+    "meshoptimizer": "^0.22.0",
+    "typescript": "5.6.3",
+    "vite": "5.4.11"
+  }
+}

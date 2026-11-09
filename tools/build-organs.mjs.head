@@ -1,0 +1,380 @@
+// build-organs.mjs — 组装 organs.glb（器官总装）
+//
+// 数据源与坐标（全部 Y 上、+Z 前、米制、脚底 y≈0）：
+//  A. body.glb        Z-Anatomy 肌骨体格（hpfrei 简化）——【目标空间】
+//  B. authorOd 容器   Z-Anatomy 标准版分块（心/肺/肝/胃/端脑）——近原生同空间，k_za 微缩放
+//  C. atlas-src       BodyParts3D 4.0 自定义 bin（肠/脾/胰/肾/膀胱/气管/食管/皮肤…）——k_bp3d 缩放
+// 输出:
+//  public/models/organs.glb     节点名 o.<organId>（合并件）
+//  tools/tmp/anchors.json       各器官世界包围盒 + 关键动脉锚点（供血管曲线与机位设计）
+//
+// 运行: node tools/build-organs.mjs
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { NodeIO, Document } from '@gltf-transform/core';
+import { ALL_EXTENSIONS, EXTMeshoptCompression } from '@gltf-transform/extensions';
+import draco3d from 'draco3dgltf';
+import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
+
+const ROOT = process.cwd();
+const P = (s) => join(ROOT, s);
+const ZA = 'tools/tmp';
+const log = (...a) => console.log(...a);
+
+/* ---------- 小型 mat4 工具（避免依赖差异，自实现） ---------- */
+function m4mul(a, b) { // a*b（列主序，与 glTF/three 一致）
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+  }
+  return o;
+}
+function m4apply(m, x, y, z) {
+  return [
+    m[0] * x + m[4] * y + m[8] * z + m[12],
+    m[1] * x + m[5] * y + m[9] * z + m[13],
+    m[2] * x + m[6] * y + m[10] * z + m[14],
+  ];
+}
+function m4scale(s) { return new Float32Array([s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1]); }
+const scaleArr = (arr, k) => { const o = new Float32Array(arr.length); for (let i = 0; i < arr.length; i++) o[i] = arr[i] * k; return o; };
+
+
+await MeshoptEncoder.ready;
+async function writeCompressed(path, doc) {
+  doc.createExtension(EXTMeshoptCompression).setRequired(true);
+  const ioOut = new NodeIO()
+    .registerExtensions(ALL_EXTENSIONS)
+    .registerDependencies({ 'draco3d.decoder': dracoDecoder, 'meshopt.decoder': MeshoptDecoder, 'meshopt.encoder': MeshoptEncoder });
+  await ioOut.write(path, doc);
+}
+
+/* ---------- gltf-transform IO ---------- */
+const dracoDecoder = await draco3d.createDecoderModule();
+const io = new NodeIO()
+  .registerExtensions(ALL_EXTENSIONS)
+  .registerDependencies({ 'draco3d.decoder': dracoDecoder, 'meshopt.decoder': MeshoptDecoder });
+
+/* ---------- A. body.glb 真实世界包围盒（含节点变换） ---------- */
+async function bodyBounds() {
+  const doc = await io.read(P('public/models/body.glb'));
+  let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  for (const node of doc.getRoot().listNodes()) {
+    const mesh = node.getMesh(); if (!mesh) continue;
+    const M = node.getWorldMatrix();
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute('POSITION'); if (!pos) continue;
+      const mnL = pos.getMin([]), mxL = pos.getMax([]); if (!mnL || !mxL) continue;
+      for (const cx of [mnL[0], mxL[0]]) for (const cy of [mnL[1], mxL[1]]) for (const cz of [mnL[2], mxL[2]]) {
+        const w = m4apply(M, cx, cy, cz);
+        for (let i = 0; i < 3; i++) { mn[i] = Math.min(mn[i], w[i]); mx[i] = Math.max(mx[i], w[i]); }
+      }
+    }
+  }
+  return { mn, mx, h: mx[1] - mn[1] };
+}
+
+/* ---------- B. Z-Anatomy 容器解码 ---------- */
+// 容器 = 1 节点 1 网格：position(量化 i16/u16 normalized) + normal + _id(u16 本地网格号) + index
+// node.extras = { meshStart, meshCount }；全局网格号 = meshStart + 本地 _id
+async function decodeZA(path) {
+  const doc = await io.read(P(path));
+  const node = doc.getRoot().listNodes().find((n) => n.getMesh());
+  if (!node) throw new Error(`${path}: no mesh node`);
+  const extras = node.getExtras();
+  const meshStart = extras.meshStart;
+  const prim = node.getMesh().listPrimitives()[0];
+  const posAcc = prim.getAttribute('POSITION');
+  const nrmAcc = prim.getAttribute('NORMAL');
+  const idAcc = prim.getAttribute('_ID') ?? prim.getAttribute('_id');
+  const idxAcc = prim.getIndices();
+  const M = node.getWorldMatrix();
+
+  const dequant = (acc) => {
+    const arr = acc.getArray(); const norm = acc.getNormalized();
+    let s = 1;
+    if (norm) {
+      if (arr instanceof Int16Array) s = 1 / 32767;
+      else if (arr instanceof Uint16Array) s = 1 / 65535;
+      else if (arr instanceof Int8Array) s = 1 / 127;
+      else if (arr instanceof Uint8Array) s = 1 / 255;
+    }
+    return { arr, s };
+  };
+  const pos = dequant(posAcc), nrm = dequant(nrmAcc);
+  const ids = idAcc.getArray();
+  const idx = idxAcc ? idxAcc.getArray() : null;
+  const vCount = posAcc.getCount();
+
+  // 逐顶点世界坐标/法线（懒变换，按需）
+  const wpos = new Float32Array(vCount * 3);
+  const wnrm = new Float32Array(vCount * 3);
+  for (let i = 0; i < vCount; i++) {
+    const x = pos.arr[i * posAcc.getElementSize()] * pos.s;
+    const y = pos.arr[i * posAcc.getElementSize() + 1] * pos.s;
+    const z = pos.arr[i * posAcc.getElementSize() + 2] * pos.s;
+    const w = m4apply(M, x, y, z);
+    wpos[i * 3] = w[0]; wpos[i * 3 + 1] = w[1]; wpos[i * 3 + 2] = w[2];
+    let nx = nrm.arr[i * nrmAcc.getElementSize()] * nrm.s;
+    let ny = nrm.arr[i * nrmAcc.getElementSize() + 1] * nrm.s;
+    let nz = nrm.arr[i * nrmAcc.getElementSize() + 2] * nrm.s;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    wnrm[i * 3] = nx / l; wnrm[i * 3 + 1] = ny / l; wnrm[i * 3 + 2] = nz / l;
+  }
+  // 按本地 _id 分组三角形（实测 _ID comp0 存的就是全局网格号，无需再加 meshStart）
+  const triById = new Map(); // globalId -> [i0,i1,i2,...]
+  const tCount = idx ? idx.length / 3 : vCount / 3;
+  const idStride = idAcc.getElementSize();
+  for (let t = 0; t < tCount; t++) {
+    const a = idx ? idx[t * 3] : t * 3, b = idx ? idx[t * 3 + 1] : t * 3 + 1, c = idx ? idx[t * 3 + 2] : t * 3 + 2;
+    const id = ids[a * idStride];
+    let list = triById.get(id); if (!list) { list = []; triById.set(id, list); }
+    list.push(a, b, c);
+  }
+  const out = new Map(); // globalMeshId -> {pos, nrm, idx}
+  for (const [localId, tris] of triById) {
+    const used = new Set(tris);
+    const remap = new Map(); const np = []; const nn = []; const ni = [];
+    for (let t = 0; t < tris.length; t++) {
+      const v = tris[t];
+      let ni2 = remap.get(v);
+      if (ni2 === undefined) {
+        ni2 = np.length / 3; remap.set(v, ni2);
+        np.push(wpos[v * 3], wpos[v * 3 + 1], wpos[v * 3 + 2]);
+        nn.push(wnrm[v * 3], wnrm[v * 3 + 1], wnrm[v * 3 + 2]);
+      }
+      ni.push(ni2);
+    }
+    out.set(localId, { pos: np, nrm: nn, idx: ni });
+  }
+  log(`  ZA ${path.split('/').pop()}: ${vCount} 顶点, ${tCount} 三角, ${out.size} 子网格 (meshStart=${meshStart})`);
+  return out;
+}
+
+/* ---------- C. BodyParts3D bin 读取 ---------- */
+// 布局: positions(f32 v*3) → normals(i16 v*3) → pad4 → indices(u32 ic)
+function readBP3DPart(atlas, part) {
+  const binPath = P(`public/models/atlas-src/body-${part.chunk}.bin`);
+  const buf = readFileSync(binPath);
+  const v = part.vertexCount, ic = part.indexCount;
+  const posOff = part.positions, nrmOff = part.normals, idxOff = part.indices;
+  const pos = new Float32Array(v * 3);
+  for (let i = 0; i < v * 3; i++) pos[i] = buf.readFloatLE(posOff + i * 4);
+  const nrm = new Float32Array(v * 3);
+  for (let i = 0; i < v * 3; i++) nrm[i] = buf.readInt16LE(nrmOff + i * 2) / 32767;
+  const idx = new Uint32Array(ic);
+  for (let i = 0; i < ic; i++) idx[i] = buf.readUInt32LE(idxOff + i * 4);
+  return { pos, nrm, idx };
+}
+
+/* ---------- 组装 ---------- */
+const body = await bodyBounds();
+const H = body.h;
+log(`body.glb 世界包围盒: min=[${body.mn.map((v) => v.toFixed(3))}] max=[${body.mx.map((v) => v.toFixed(3))}] h=${H.toFixed(4)}`);
+const K_ZA = H / 1.743723;   // Z-Anatomy manifest bounds 高
+const K_BP = H / 1.730000;   // BodyParts3D 全局 bounds 高
+log(`缩放系数: K_ZA=${K_ZA.toFixed(5)}  K_BP=${K_BP.toFixed(5)}`);
+
+const manifest = JSON.parse(readFileSync(P(`${ZA}/za-manifest.json`), 'utf8'));
+const kids = {}; for (const s of manifest.structures) (kids[s.parent] ??= []).push(s);
+const collect = (id, acc = []) => { for (const k of kids[id] ?? []) { if (k.meshes) acc.push(k); collect(k.id, acc); } return acc; };
+
+// 下载在手的 ZA 分块 → 全局网格号表
+const zaFiles = [
+  'za-cardiovascular_arterial_system.glb', 'za-visceral_endocrine_glands--respiratory_system.glb',
+  'za-visceral_digestive_system.glb', 'za-nervous_brain.glb', 'za-nervous_telencephalon.glb',
+  'za-nervous_telencephalon.2.glb', 'za-nervous_white_matter_of_telencephalon_l.glb',
+  'za-visceral_urinary_system.glb',
+  'za-nervous_spinal_cord--autonomic_division_of_peripheral_nervous.glb',
+  'za-nervous_spinal_nerves.glb', 'za-nervous_peripheral_nervous_system.glb',
+  'za-nervous_central_nervous_system.glb',
+];
+const zaMeshes = new Map(); // globalMeshId -> {pos,nrm,idx}
+for (const f of zaFiles) { if (!existsSync(P(`${ZA}/${f}`))) { log(`!! 缺文件 ${f}`); continue; } const m = await decodeZA(`${ZA}/${f}`); for (const [k, v] of m) zaMeshes.set(k, v); }
+
+// ZA 器官选择：organId -> 结构 id / 过滤器
+const zaWants = [
+  ['heart', (s) => collect('cardiovascular.heart')],
+  ['lungs', (s) => [...collect('visceral.left_lung'), ...collect('visceral.right_lung')]],
+  ['liver', (s) => m2(structure('visceral.liver'))],
+  ['stomach', (s) => m2(structure('visceral.stomach'))],
+  ['brain', (s) => collect('nervous.brain').filter((x) => /cerebr|cerebell|medulla|pons|midbrain|telencephalon|thalamus|hypothalamus|brainstem/i.test(x.id))],
+  ['kidneys', (s) => collect('visceral.urinary_system').filter((x) => /kidney/i.test(x.id))],
+  ['nerves', (s) => [...collect('nervous.spinal_cord'), ...collect('nervous.spinal_nerves'), ...collect('nervous.peripheral_nervous_system')].filter((x) => x.meshes)],
+  ['ureters-bladder', (s) => collect('visceral.urinary_system').filter((x) => /ureter|bladder|urethra/i.test(x.id))],
+];
+function structure(id) { return manifest.structures.find((x) => x.id === id); }
+function m2(s) { return s && s.meshes ? [s] : []; }
+
+/** 合并一组 {pos,nrm,idx}（同一坐标系，统一再乘 k） */
+function merge(parts, k, flip = false) {
+  let nv = 0, ni = 0;
+  for (const p of parts) { nv += p.pos.length / 3; ni += p.idx.length; }
+  const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), idx = new Uint32Array(ni);
+  let vo = 0, io2 = 0;
+  for (const p of parts) {
+    for (let i = 0; i < p.pos.length; i++) pos[vo * 3 + i] = p.pos[i] * k;
+    for (let i = 0; i < p.nrm.length; i++) nrm[vo * 3 + i] = p.nrm[i];
+    for (let i = 0; i < p.idx.length; i++) idx[io2 + i] = p.idx[i] + vo;
+    vo += p.pos.length / 3; io2 += p.idx.length;
+  }
+  return { pos, nrm, idx };
+}
+
+const organs = new Map(); // organId -> parts[]
+const zaMiss = [];
+for (const [organId, fn] of zaWants) {
+  const list = fn();
+  const parts = [];
+  for (const s of list) for (const mid of s.meshes) {
+    const g = zaMeshes.get(mid);
+    if (g) parts.push(g); else zaMiss.push(`${organId}:${s.id}#${mid}`);
+  }
+  if (parts.length) organs.set(organId, parts);
+  log(`ZA ${organId}: ${list.length} 结构, ${parts.length} 子网格`);
+}
+if (zaMiss.length) log('!! ZA 未命中(不在已下载分块):', [...new Set(zaMiss)].slice(0, 8).join(' | '), zaMiss.length > 8 ? `… 共${zaMiss.length}` : '');
+
+// BP3D 器官选择
+const atlas = JSON.parse(readFileSync(P('public/models/atlas-src/atlas.json'), 'utf8'));
+const byId = new Map(atlas.parts.map((p) => [p.id, p]));
+const bpSel = [
+  ['esophagus', ['FJ2563']],
+  ['small-intestine', atlas.parts.filter((p) => /part of (ileum|jejunum)$/.test(p.name)).map((p) => p.id)],
+  ['large-intestine', ['FJ2566', 'FJ2572', 'FJ2567', 'FJ2571', 'FJ2565']],
+  ['spleen', ['FJ2561']],
+  ['pancreas', ['FJ1895']],
+  ['gallbladder', ['FJ2817']],
+  ['trachea-bronchi', ['FJ2541', 'FJ2450', 'FJ2539']],
+  ['thymus', ['FJ3150', 'FJ3151']],
+  ['skin', ['FJ2810']],
+];
+const anchors = { organs: {}, arteries: {} };
+for (const [organId, ids] of bpSel) {
+  const parts = [];
+  for (const id of ids) {
+    const p = byId.get(id); if (!p) { log(`!! BP3D 缺件 ${id}`); continue; }
+    const g = readBP3DPart(atlas, p);
+    parts.push(g);
+  }
+  if (!parts.length) continue;
+  // 合并并缩放到 body 空间
+  const raw = merge(parts, 1);
+  const scaled = { pos: scaleArr(raw.pos, K_BP), nrm: raw.nrm, idx: raw.idx };
+  organs.set(organId, [scaled]);
+  log(`BP3D ${organId}: ${ids.length} 件, ${(scaled.pos.length / 3).toLocaleString()} 顶点`);
+}
+
+// 关键动脉锚点（BP3D 世界坐标 × K_BP，用于血管曲线设计）
+const arteryNames = /aorta|pulmonary (trunk|artery|veins?)|coronary artery|carotid artery|subclavian artery|brachiocephalic (trunk|artery)|vena cava/i;
+for (const p of atlas.parts) {
+  if (!arteryNames.test(p.name)) continue;
+  const c = [(p.bounds[0][0] + p.bounds[1][0]) / 2 * K_BP, (p.bounds[0][1] + p.bounds[1][1]) / 2 * K_BP, (p.bounds[0][2] + p.bounds[1][2]) / 2 * K_BP];
+  const key = `${p.name} #${p.id}`;
+  anchors.arteries[key] = { center: c.map((v) => +v.toFixed(4)), min: p.bounds[0].map((v) => +(v * K_BP).toFixed(4)), max: p.bounds[1].map((v) => +(v * K_BP).toFixed(4)) };
+}
+
+// 血管树：arterial + venous 真实部件（按三角预算截断），输出独立 vasculature.glb
+const VASC_BUDGET = 320000;
+const vascSel = { arterial: [], venous: [] };
+let vascTris = 0;
+const vascCand = atlas.parts
+  .filter((p) => p.system === 'arterial' || p.system === 'venous')
+  .sort((a, b) => b.vertexCount - a.vertexCount);
+for (const p of vascCand) {
+  const t = p.indexCount / 3;
+  if (vascTris + t > VASC_BUDGET) continue;
+  vascSel[p.system].push(p);
+  vascTris += t;
+}
+log(`血管树: arterial ${vascSel.arterial.length} 件, venous ${vascSel.venous.length} 件, 共 ${Math.round(vascTris).toLocaleString()} 三角`);
+
+// 中心线提取器（血管与神经共用）：PCA 主轴 + 分箱平均
+const HEART = [0.022, 1.258, 0.076];
+const BRAIN = [0, 1.55, 0.02];
+const centerline = (g, n = 12, name) => {
+  const vc = g.pos.length / 3;
+  if (!vc) return [];
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < vc; i++) { cx += g.pos[i * 3]; cy += g.pos[i * 3 + 1]; cz += g.pos[i * 3 + 2]; }
+  cx /= vc; cy /= vc; cz /= vc;
+  let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+  for (let i = 0; i < vc; i++) {
+    const x = g.pos[i * 3] - cx, y = g.pos[i * 3 + 1] - cy, z = g.pos[i * 3 + 2] - cz;
+    xx += x * x; xy += x * y; xz += x * z; yy += y * y; yz += y * z; zz += z * z;
+  }
+  const mul = (v) => [xx * v[0] + xy * v[1] + xz * v[2], xy * v[0] + yy * v[1] + yz * v[2], xz * v[0] + yz * v[1] + zz * v[2]];
+  let axis = [0.3, 0.9, 0.2];
+  for (let it = 0; it < 24; it++) { const w = mul(axis); const l = Math.hypot(w[0], w[1], w[2]) || 1; axis = [w[0] / l, w[1] / l, w[2] / l]; }
+  let mn = Infinity, mx = -Infinity;
+  const t = new Float32Array(vc);
+  for (let i = 0; i < vc; i++) { const p = g.pos[i * 3] * axis[0] + g.pos[i * 3 + 1] * axis[1] + g.pos[i * 3 + 2] * axis[2]; if (!isFinite(p)) return []; t[i] = p; if (p < mn) mn = p; if (p > mx) mx = p; }
+  if (!isFinite(mn) || !isFinite(mx) || mx <= mn) return [];
+  const bins = Array.from({ length: n }, () => [0, 0, 0, 0]);
+  for (let i = 0; i < vc; i++) {
+    let b = Math.floor(((t[i] - mn) / (mx - mn + 1e-9)) * n);
+    b = Math.max(0, Math.min(n - 1, b)); // Float32 舍入可能使 floor 越界一位
+    bins[b][0] += g.pos[i * 3]; bins[b][1] += g.pos[i * 3 + 1]; bins[b][2] += g.pos[i * 3 + 2]; bins[b][3]++;
+  }
+  return bins.filter((b) => b[3] > 0).map((b) => [b[0] / b[3], b[1] / b[3], b[2] / b[3]]);
+};
+const dist3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const curveLen = (pts) => { let l = 0; for (let i = 1; i < pts.length; i++) l += dist3(pts[i - 1], pts[i]); return l; };
+
+{
+  // 全人体粒子流路径：从每根真实血管部件提取中心线（PCA 主轴 + 分箱平均）
+  const HEART = [0.022, 1.258, 0.076];
+  const HERO_HINT = /(aorta|carotid|coronary|vena cava|renal|pulmonary)/i; // 主干已由手写曲线覆盖
+  const centerline = (g, n = 12, name) => {
+    const vc = g.pos.length / 3;
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < vc; i++) { cx += g.pos[i * 3]; cy += g.pos[i * 3 + 1]; cz += g.pos[i * 3 + 2]; }
+    cx /= vc; cy /= vc; cz /= vc;
+    let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+    for (let i = 0; i < vc; i++) {
+      const x = g.pos[i * 3] - cx, y = g.pos[i * 3 + 1] - cy, z = g.pos[i * 3 + 2] - cz;
+      xx += x * x; xy += x * y; xz += x * z; yy += y * y; yz += y * z; zz += z * z;
+    }
+    const mul = (v) => [xx * v[0] + xy * v[1] + xz * v[2], xy * v[0] + yy * v[1] + yz * v[2], xz * v[0] + yz * v[1] + zz * v[2]];
+    let axis = [0.3, 0.9, 0.2];
+    for (let it = 0; it < 24; it++) { const w = mul(axis); const l = Math.hypot(w[0], w[1], w[2]) || 1; axis = [w[0] / l, w[1] / l, w[2] / l]; }
+    let mn = Infinity, mx = -Infinity;
+    const t = new Float32Array(vc);
+    let nan = false;
+    for (let i = 0; i < vc; i++) { const p = g.pos[i * 3] * axis[0] + g.pos[i * 3 + 1] * axis[1] + g.pos[i * 3 + 2] * axis[2]; if (!isFinite(p)) nan = true; t[i] = p; if (p < mn) mn = p; if (p > mx) mx = p; }
+    if (nan || !isFinite(mn) || !isFinite(mx) || mx <= mn) { log(`!! 跳过含 NaN 的血管部件: ${name ?? '?'}`); return []; }
+    const bins = Array.from({ length: n }, () => [0, 0, 0, 0]);
+    for (let i = 0; i < vc; i++) {
+      let b = Math.floor(((t[i] - mn) / (mx - mn + 1e-9)) * n);
+      b = Math.max(0, Math.min(n - 1, b)); // Float32 舍入可能使 floor 越界一位
+      bins[b][0] += g.pos[i * 3]; bins[b][1] += g.pos[i * 3 + 1]; bins[b][2] += g.pos[i * 3 + 2]; bins[b][3]++;
+    }
+    return bins.filter((b) => b[3] > 0).map((b) => [b[0] / b[3], b[1] / b[3], b[2] / b[3]]);
+  };
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const autoCurves = [];
+  for (const [sysName, list] of Object.entries(vascSel)) {
+    const type = sysName === 'arterial' ? 'artery' : 'vein';
+    for (const p of list) {
+      if (HERO_HINT.test(p.name)) continue; // 主干留给手写解剖曲线
+      const raw = readBP3DPart(atlas, p);
+      const g = { pos: scaleArr(raw.pos, K_BP), idx: raw.idx };
+      const pts = centerline(g, 12, p.name);
+      if (pts.length < 4) continue;
+      let len = 0; for (let i = 1; i < pts.length; i++) len += dist(pts[i - 1], pts[i]);
+      if (len < 0.035) continue; // 3.5cm 以下的碎片不成流
+      // 方向：动脉离心（起点靠近心脏），静脉回心（起点远离心脏）
+      const d0 = dist(pts[0], HEART), d1 = dist(pts[pts.length - 1], HEART);
+      const artery = type === 'artery';
+      if ((artery && d0 > d1) || (!artery && d0 < d1)) pts.reverse();
+      autoCurves.push({
+        id: `auto-${p.id}`, type, label: p.name,
+        count: Math.max(24, Math.min(160, Math.round(len * 2000))),
+        size: 0.55,
+        points: pts.map((q) => q.map((v) => +v.toFixed(4))),
+      });
+    }
+  }
+  writeFileSync(P('src/data/vessels-auto.json'), JSON.stringify({ curves: autoCurves }, null, 1));
+  log(`✓ 全人体粒子路径: ${autoCurves.length} 根, ${autoCurves.reduce((s, c) => s + c.count, 0).toLocaleString()} 粒子`);
+

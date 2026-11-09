@@ -1,0 +1,19 @@
+# 文本文件统一 LF：Windows 全局 core.autocrlf=true 会把 .sh 转成 CRLF，
+# 导致推送后脚本在 Linux/macOS 上报 `\r: command not found`。
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF，否则 cmd.exe 会把整个文件解析成一团乱码
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制资产：禁止换行转换与文本 diff，避免跨平台克隆后损坏
+*.glb   -text -diff
+*.bin   -text -diff
+*.gz    -text -diff
+*.png   -text -diff
+*.jpg   -text -diff
+*.jpeg  -text -diff
+*.webp  -text -diff
+*.woff  -text -diff
+*.woff2 -text -diff
+*.stl   -text -diff

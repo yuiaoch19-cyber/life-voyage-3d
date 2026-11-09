@@ -1,0 +1,253 @@
+}
+
+/* ---------- 几何助手（v5.2：weld → 细分 → 平滑 → 法线） ---------- */
+function weldGeometry(g) {
+  // 按位置焊接重复顶点：消除接缝（同位置不同法线的顶点是位移裂缝的根源）
+  const E = 100000; // 0.01mm 精度
+  const map = new Map();
+  const remap = new Uint32Array(g.pos.length / 3);
+  const np = [];
+  for (let i = 0; i < g.pos.length / 3; i++) {
+    const k = Math.round(g.pos[i * 3] * E) + '_' + Math.round(g.pos[i * 3 + 1] * E) + '_' + Math.round(g.pos[i * 3 + 2] * E);
+    let j = map.get(k);
+    if (j === undefined) { j = np.length / 3; np.push(g.pos[i * 3], g.pos[i * 3 + 1], g.pos[i * 3 + 2]); map.set(k, j); }
+    remap[i] = j;
+  }
+  const idx = new Uint32Array(g.idx.length);
+  for (let t = 0; t < g.idx.length; t++) idx[t] = remap[g.idx[t]];
+  return { pos: Float32Array.from(np), nrm: g.nrm, idx };
+}
+
+function refineGeometry(g, subdivide) {
+  let pos = g.pos, idx = g.idx;
+  ({ pos, idx } = weldGeometry({ pos, idx })); // 先焊接，细分/平滑/位移都建立在无缝网格上
+  if (subdivide) {
+    const E = 100000; // 顶点数远小于 1e7，用数值边键
+    const edgeMap = new Map();
+    for (let t = 0; t < idx.length; t += 3) {
+      const tri = [idx[t], idx[t + 1], idx[t + 2]];
+      for (let e = 0; e < 3; e++) {
+        const a = tri[e], b = tri[(e + 1) % 3];
+        const k = a < b ? a * E + b : b * E + a;
+        if (!edgeMap.has(k)) edgeMap.set(k, -1);
+      }
+    }
+    const vc0 = pos.length / 3;
+    const pos2 = new Float32Array((vc0 + edgeMap.size) * 3);
+    pos2.set(pos);
+    let m = vc0;
+    for (const [k] of edgeMap) {
+      const a = Math.floor(k / E), b = k % E;
+      pos2[m * 3] = (pos[a * 3] + pos[b * 3]) / 2;
+      pos2[m * 3 + 1] = (pos[a * 3 + 1] + pos[b * 3 + 1]) / 2;
+      pos2[m * 3 + 2] = (pos[a * 3 + 2] + pos[b * 3 + 2]) / 2;
+      edgeMap.set(k, m); m++;
+    }
+    const mid = (a, b) => edgeMap.get(a < b ? a * E + b : b * E + a);
+    const ni = new Uint32Array(idx.length * 4);
+    for (let t = 0, o = 0; t < idx.length; t += 3, o += 12) {
+      const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+      const ab = mid(a, b), bc = mid(b, c), ca = mid(c, a);
+      ni[o] = a; ni[o + 1] = ab; ni[o + 2] = ca;
+      ni[o + 3] = b; ni[o + 4] = bc; ni[o + 5] = ab;
+      ni[o + 6] = c; ni[o + 7] = ca; ni[o + 8] = bc;
+      ni[o + 9] = ab; ni[o + 10] = bc; ni[o + 11] = ca;
+    }
+    pos = pos2; idx = ni;
+  }
+  // 拉普拉斯平滑（连通分量内独立，不会跨部件桥接）
+  const vc = pos.length / 3;
+  const nbr = Array.from({ length: vc }, () => null);
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+    (nbr[a] ??= new Set()).add(b); (nbr[a]).add(c);
+    (nbr[b] ??= new Set()).add(a); (nbr[b]).add(c);
+    (nbr[c] ??= new Set()).add(a); (nbr[c]).add(b);
+  }
+  let src = pos;
+  for (let iter = 0; iter < 2; iter++) {
+    const dst = Float32Array.from(src);
+    for (let i = 0; i < vc; i++) {
+      const ns = nbr[i]; if (!ns) continue;
+      let ax = 0, ay = 0, az = 0;
+      for (const j of ns) { ax += src[j * 3]; ay += src[j * 3 + 1]; az += src[j * 3 + 2]; }
+      const k = ns.size;
+      dst[i * 3] = src[i * 3] * 0.6 + (ax / k) * 0.4;
+      dst[i * 3 + 1] = src[i * 3 + 1] * 0.6 + (ay / k) * 0.4;
+      dst[i * 3 + 2] = src[i * 3 + 2] * 0.6 + (az / k) * 0.4;
+    }
+    src = dst;
+  }
+  const nrm2 = new Float32Array(src.length);
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+    const ux = src[b] - src[a], uy = src[b + 1] - src[a + 1], uz = src[b + 2] - src[a + 2];
+    const vx = src[c] - src[a], vy = src[c + 1] - src[a + 1], vz = src[c + 2] - src[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    nrm2[a] += nx; nrm2[a + 1] += ny; nrm2[a + 2] += nz;
+    nrm2[b] += nx; nrm2[b + 1] += ny; nrm2[b + 2] += nz;
+    nrm2[c] += nx; nrm2[c + 1] += ny; nrm2[c + 2] += nz;
+  }
+  for (let i = 0; i < nrm2.length; i += 3) {
+    const l = Math.hypot(nrm2[i], nrm2[i + 1], nrm2[i + 2]) || 1;
+    nrm2[i] /= l; nrm2[i + 1] /= l; nrm2[i + 2] /= l;
+  }
+  return { pos: src, nrm: nrm2, idx };
+}
+
+function boundsOf(g) {
+  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  for (let i = 0; i < g.pos.length; i += 3) {
+    for (let a = 0; a < 3; a++) { mn[a] = Math.min(mn[a], g.pos[i + a]); mx[a] = Math.max(mx[a], g.pos[i + a]); }
+  }
+  return { mn, mx, center: mn.map((v, a) => (v + mx[a]) / 2), size: mn.map((v, a) => mx[a] - v) };
+}
+
+function sphereGeometry(r, lat = 10, lon = 14) {
+  const pos = [], nrm = [], idx = [];
+  for (let i = 0; i <= lat; i++) {
+    const th = (i / lat) * Math.PI;
+    for (let j = 0; j <= lon; j++) {
+      const ph = (j / lon) * Math.PI * 2;
+      const x = Math.sin(th) * Math.cos(ph), y = Math.cos(th), z = Math.sin(th) * Math.sin(ph);
+      pos.push(x * r, y * r, z * r); nrm.push(x, y, z);
+    }
+  }
+  for (let i = 0; i < lat; i++) for (let j = 0; j < lon; j++) {
+    const a = i * (lon + 1) + j, b = a + lon + 1;
+    idx.push(a, b, a + 1, b, b + 1, a + 1);
+  }
+  return { pos: Float32Array.from(pos), nrm: Float32Array.from(nrm), idx: new Uint32Array(idx) };
+}
+
+/* ---------- 神经流道：ZA 神经部件中心线（信号从脑/脊髓发出） ---------- */
+const nerveCurves = [];
+const seenNerveMesh = new Set();
+const nerveLeaves = collect('nervous.peripheral_nervous_system')
+  .concat(collect('nervous.spinal_cord'), collect('nervous.spinal_nerves'))
+  .filter((x) => x.meshes);
+for (const st of nerveLeaves) {
+  for (const mid of st.meshes) {
+    if (seenNerveMesh.has(mid)) continue;
+    seenNerveMesh.add(mid);
+    const g0 = zaMeshes.get(mid);
+    if (!g0) continue;
+    const g = { pos: scaleArr(g0.pos, K_ZA).map((v, i) => (i % 3 === 2 ? v * 0.78 : v)), idx: g0.idx };
+    // 排除头部段（脑神经由脑器官覆盖）
+    let cy2 = 0, n2 = 0;
+    for (let i = 1; i < g.pos.length; i += 3) { cy2 += g.pos[i]; n2++; }
+    if (n2 && cy2 / n2 > 1.52) continue;
+    const pts = centerline(g, 12, st.id);
+    if (pts.length < 4) continue;
+    const len = curveLen(pts);
+    if (len < 0.04) continue;
+    const d0 = dist3(pts[0], BRAIN), d1 = dist3(pts[pts.length - 1], BRAIN);
+    if (d0 > d1) pts.reverse(); // 信号从脑/脊髓发出
+    nerveCurves.push({
+      id: `n-${st.id}-${mid}`, type: 'artery', label: st.id,
+      count: Math.max(18, Math.min(90, Math.round(len * 1400))), size: 0.5,
+      points: pts.map((q) => q.map((v) => +v.toFixed(4))),
+    });
+  }
+}
+writeFileSync(P('src/data/nerve-paths.json'), JSON.stringify({ curves: nerveCurves }, null, 1));
+log(`✓ 神经流道: ${nerveCurves.length} 条, ${nerveCurves.reduce((s, c) => s + c.count, 0).toLocaleString()} 粒子`);
+
+/* ---------- 神经节点锚点 ---------- */
+const nerveNodeAnchors = {};
+const NODE_TARGETS = [
+  ['node-spinal-cord', 'nervous.spinal_cord'],
+  ['node-brachial-plexus', 'nervous.brachial_plexus'],
+  ['node-median-nerve', 'nervous.median_nerve_l'],
+  ['node-sciatic-nerve', 'nervous.sciatic_nerve_l'],
+  ['node-vagus-nerve', 'nervous.vagus_nerve_x_l'],
+];
+for (const [nid, sid] of NODE_TARGETS) {
+  const self = manifest.structures.find((x) => x.id === sid);
+  const meshes = (self?.meshes ? self.meshes : collect(sid).filter((x) => x.meshes).flatMap((x) => x.meshes));
+  let cx = 0, cy = 0, cz = 0, n = 0;
+  for (const mid of meshes) {
+    const g0 = zaMeshes.get(mid); if (!g0) continue;
+    const bb = boundsOf({ pos: scaleArr(g0.pos, K_ZA), idx: g0.idx });
+    cx += bb.center[0]; cy += bb.center[1]; cz += bb.center[2]; n++;
+  }
+  if (n) nerveNodeAnchors[nid] = [+(cx / n).toFixed(4), +(cy / n).toFixed(4), +(cz / n).toFixed(4)];
+}
+writeFileSync(P('tools/tmp/nerve-anchors.json'), JSON.stringify(nerveNodeAnchors, null, 1));
+log(`✓ 神经节点锚点: ${JSON.stringify(nerveNodeAnchors)}`);
+
+/* ---------- 写 nervous.glb（脊髓 + 外周神经 + 节点球） ---------- */
+const vNervous = new Document();
+const vNervousScene = vNervous.createScene('nervous');
+const vNervousBuf = vNervous.createBuffer();
+const vNervousMat = vNervous.createMaterial('nerve').setBaseColorFactor([0.95, 0.89, 0.48, 1]).setMetallicFactor(0.05).setRoughnessFactor(0.5);
+const nervesEntry = organs.get('nerves');
+organs.delete('nerves');
+if (nervesEntry) {
+  const g = merge(nervesEntry, 1);
+  let npos = scaleArr(g.pos, K_ZA), nidx = g.idx, nnrm = g.nrm;
+  for (let i = 2; i < npos.length; i += 3) npos[i] *= 0.78; // ZA 原版体格比 hpfrei 深，Z 向内收（贴合测量）
+  const r = refineGeometry({ pos: npos, idx: nidx }, false);
+  npos = r.pos; nnrm = r.nrm; nidx = r.idx;
+  const bc = boundsOf({ pos: npos, idx: nidx });
+  for (let i = 0; i < npos.length; i += 3) { npos[i] -= bc.center[0]; npos[i + 1] -= bc.center[1]; npos[i + 2] -= bc.center[2]; }
+  const accP = vNervous.createAccessor().setBuffer(vNervousBuf).setType('VEC3').setArray(npos);
+  const accN = vNervous.createAccessor().setBuffer(vNervousBuf).setType('VEC3').setArray(nnrm);
+  const accI = vNervous.createAccessor().setBuffer(vNervousBuf).setType('SCALAR').setArray(nidx);
+  const prim = vNervous.createPrimitive().setAttribute('POSITION', accP).setAttribute('NORMAL', accN).setIndices(accI).setMaterial(vNervousMat);
+  const mesh = vNervous.createMesh('m.nerves'); mesh.addPrimitive(prim);
+  const node = vNervous.createNode('o.nerves'); node.setMesh(mesh); node.setTranslation([bc.center[0], bc.center[1], bc.center[2]]); vNervousScene.addChild(node);
+  anchors.organs['nerves'] = { center: bc.center.map((v) => +v.toFixed(4)), min: bc.mn.map((v) => +v.toFixed(4)), max: bc.mx.map((v) => +v.toFixed(4)), tris: nidx.length / 3 };
+  log(`✓ nervous.nerves: ${(nidx.length / 3).toLocaleString()} 三角, center=[${bc.center.map((v) => v.toFixed(3))}]`);
+}
+for (const [nid, c] of Object.entries(nerveNodeAnchors)) {
+  const g = sphereGeometry(0.0085, 10, 12);
+  const accP = vNervous.createAccessor().setBuffer(vNervousBuf).setType('VEC3').setArray(g.pos);
+  const accN = vNervous.createAccessor().setBuffer(vNervousBuf).setType('VEC3').setArray(g.nrm);
+  const accI = vNervous.createAccessor().setBuffer(vNervousBuf).setType('SCALAR').setArray(g.idx);
+  const prim = vNervous.createPrimitive().setAttribute('POSITION', accP).setAttribute('NORMAL', accN).setIndices(accI).setMaterial(vNervousMat);
+  const mesh = vNervous.createMesh(`m.${nid}`); mesh.addPrimitive(prim);
+  const node = vNervous.createNode(`o.${nid}`); node.setMesh(mesh); node.setTranslation([c[0], c[1], c[2]]); vNervousScene.addChild(node);
+  anchors.organs[nid] = { center: c, min: c, max: c, tris: g.idx.length / 3 };
+  log(`✓ ${nid}: 节点标记`);
+}
+await writeCompressed(P('public/models/nervous.glb'), vNervous);
+log('输出: public/models/nervous.glb');
+
+/* ---------- 写 organs.glb ---------- */
+const out = new Document();
+const scene = out.createScene('organs');
+const mat = out.createMaterial('organ-default')
+  .setBaseColorFactor([1, 1, 1, 1]).setMetallicFactor(0.1).setRoughnessFactor(0.55);
+const buffer = out.createBuffer();
+
+function boundsOf2(g) { return boundsOf(g); } // 兼容别名
+
+const BP3D_IDS = new Set(['skin', 'esophagus', 'small-intestine', 'large-intestine', 'spleen', 'pancreas', 'gallbladder', 'trachea-bronchi', 'thymus']);
+const SKIP_REFINE = new Set(['skin', 'brain', 'trachea-bronchi']);
+for (const [organId, parts] of organs) {
+  const g = merge(parts, 1);
+  let pos = g.pos, nrm = g.nrm, idx = g.idx;
+  if (!BP3D_IDS.has(organId)) pos = scaleArr(pos, K_ZA); // ZA 原始坐标统一缩放到 body 空间；BP3D 已在入 map 时缩放
+  if (!SKIP_REFINE.has(organId)) {
+    const tris = idx.length / 3;
+    const r = refineGeometry({ pos, idx }, tris < 15000);
+    pos = r.pos; nrm = r.nrm; idx = r.idx;
+  }
+  // 枢轴重定向：节点原点移到自身包围盒中心（否则病变缩放绕脚底原点，器官会整体上移）
+  const bc = boundsOf({ pos, idx });
+  for (let i = 0; i < pos.length; i += 3) { pos[i] -= bc.center[0]; pos[i + 1] -= bc.center[1]; pos[i + 2] -= bc.center[2]; }
+  const accP = out.createAccessor().setBuffer(buffer).setType('VEC3').setArray(pos);
+  const accN = out.createAccessor().setBuffer(buffer).setType('VEC3').setArray(nrm);
+  const accI = out.createAccessor().setBuffer(buffer).setType('SCALAR').setArray(idx);
+  const prim = out.createPrimitive().setAttribute('POSITION', accP).setAttribute('NORMAL', accN).setIndices(accI).setMaterial(mat);
+  const mesh = out.createMesh(`m.${organId}`); mesh.addPrimitive(prim);
+  const node = out.createNode(`o.${organId}`); node.setMesh(mesh); scene.addChild(node);
+  node.setTranslation([bc.center[0], bc.center[1], bc.center[2]]);
+  anchors.organs[organId] = { center: bc.center.map((v) => +v.toFixed(4)), min: bc.mn.map((v) => +v.toFixed(4)), max: bc.mx.map((v) => +v.toFixed(4)), tris: idx.length / 3 };
+  log(`✓ ${organId}: ${(idx.length / 3).toLocaleString()} 三角, center=[${bc.center.map((v) => v.toFixed(3))}]`);
+}
+
+await writeCompressed(P('public/models/organs.glb'), out);
+writeFileSync(P('tools/tmp/anchors.json'), JSON.stringify(anchors, null, 1));
+log(`\n输出: public/models/organs.glb, tools/tmp/anchors.json (${Object.keys(anchors.arteries).length} 动脉锚点)`);
